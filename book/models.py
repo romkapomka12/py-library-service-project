@@ -12,5 +12,9 @@ class Book(models.Model):
     inventory = models.PositiveIntegerField(default=0)
     daily_free = models.DecimalField(max_digits=7, decimal_places=2)
 
+    @property
+    def not_available(self):
+        return self.inventory == 0
+
     def __str__(self) -> str:
         return self.title
