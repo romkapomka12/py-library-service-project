@@ -1,94 +1,68 @@
-from datetime import date
+from datetime import datetime
 
-from django.shortcuts import render
-from rest_framework import viewsets, mixins, status
-from rest_framework.decorators import api_view
+import rest_framework_simplejwt.authentication
+from django.db import transaction
+
+from rest_framework import mixins, status
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.viewsets import GenericViewSet
 from rest_framework.response import Response
-from rest_framework.views import APIView
 
-from book.permissions import IsAdminOrIfAuthenticatedReadOnly
 from borrowing.models import Borrowing
 from borrowing.serializers import (
-    BorrowingSerializer,
-    BorrowingDetailSerializer,
     BorrowingCreateSerializer,
+    BorrowingDetailSerializer,
+    BorrowingSerializer,
 )
 
 
 class BorrowingViewSet(
-    mixins.ListModelMixin,
     mixins.CreateModelMixin,
+    mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
-    mixins.UpdateModelMixin,
-    viewsets.GenericViewSet,
+    GenericViewSet,
 ):
-    queryset = Borrowing.objects.select_related("book", "user")
+    queryset = Borrowing.objects.all().select_related("book", "user")
     serializer_class = BorrowingSerializer
-    permission_classes = (IsAdminOrIfAuthenticatedReadOnly,)
-
-    # def get_queryset(self):
-    #     user = self.request.user
-    #     if user.is_superuser:
-    #         return Borrowing.objects.all()
-    #     else:
-    #         return Borrowing.objects.filter(user=user)
-
-    # def get_queryset(self):
-    #     return self.queryset.filter(user=self.user.request.user)
-
-    def get_serializer_class(self):
-        if self.action == "list":
-            return BorrowingSerializer
-        elif self.action == "create":
-            return BorrowingCreateSerializer
-        elif self.action == "retrieve":
-            return BorrowingDetailSerializer
-        return BorrowingSerializer
+    permission_classes = (IsAuthenticated,)
 
     @staticmethod
     def _params_to_ints(qs):
         """Converts a list of string IDs to a list of integers"""
         return [int(str_id) for str_id in qs.split(",")]
 
+    @staticmethod
     def _params_to_bool(qs: str) -> bool:
         """Converts a str to bool True or False"""
         return qs.lower() == "true"
 
-    @api_view(["GET"])
-    def get_borrowings_by_user_id(request):
-        user_id = request.query_params.get("user_id")
-        is_active_param = request.query_params.get("is_active")
+    def get_queryset(self):
+        queryset = self.queryset
 
-        if is_active_param is not None:
-            is_active = True if is_active_param.lower() == "true" else False
-            borrowings = Borrowing.objects.filter(user_id=user_id, is_active=is_active)
-        else:
-            borrowings = Borrowing.objects.filter(user_id=user_id)
+        """Filter by user and active loan"""
+        user = self.request.query_params.get("user")
+        is_active = self.request.query_params.get("is_active")
 
-        serializer = BorrowingDetailSerializer(borrowings, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        if user:
+            user_ids = self._params_to_ints(user)
+            queryset = queryset.filter(user_id__in=user_ids)
 
+        if is_active:
+            is_active_bool = self._params_to_bool(is_active)
+            queryset = queryset.filter(is_active=is_active_bool)
 
-class BorrowingReturnView(APIView):
-    serializer_class = BorrowingSerializer
-    permission_classes = (IsAdminOrIfAuthenticatedReadOnly,)
+        """If this is a request for a list or details and the user is not an administrator,
+        filter by user """
 
-    def post(self, request, borrowing_id):
-        borrowing = Borrowing.objects.get(id=borrowing_id)
+        if self.action in ("list", "retrieve") and not self.request.user.is_staff:
+            queryset = queryset.filter(user=self.request.user)
+        return queryset
 
-        if borrowing.actual_return_date:
-            return Response(
-                {"error": "Book has already been returned"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    def get_serializer_class(self):
+        if self.action == "create":
+            return BorrowingCreateSerializer
+        if self.action == "retrieve":
+            return BorrowingDetailSerializer
+        return BorrowingSerializer
 
-        borrowing.actual_return_date = date.today()
-        borrowing.save()
-
-        # Increment the inventory count of the returned book
-        returned_book = borrowing.book
-        returned_book.inventory_count += 1
-        returned_book.save()
-
-        serializer = BorrowingSerializer(borrowing)
-        return Response(serializer.data, status=status.HTTP_200_OK)
