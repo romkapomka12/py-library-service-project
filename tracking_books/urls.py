@@ -22,8 +22,8 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/library/", include("book.urls", namespace="books")),
     path("api/users/", include("user.urls", namespace="user")),
-
-
+    path("api/borrowings/", include("borrowing.urls", namespace="borrowing")),
+    path("api/payments/", include("payment.urls", namespace="payment")),
 ]
 
 app_name = "tracking_books"
