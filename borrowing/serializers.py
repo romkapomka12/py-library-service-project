@@ -8,9 +8,9 @@ from borrowing.models import Borrowing
 
 
 class BorrowingSerializer(serializers.ModelSerializer):
-    borrow_date = serializers.DateTimeField(format="%d-%m-%Y", default=datetime.now)
-    expected_return_date = serializers.DateTimeField(format="%d-%m-%Y")
-    actual_return_date = serializers.DateTimeField(format="%d-%m-%Y")
+    borrow_date = serializers.DateField(format="%d-%m-%Y", default=datetime.now)
+    expected_return_date = serializers.DateField(format="%d-%m-%Y")
+    actual_return_date = serializers.DateField(format="%d-%m-%Y")
     is_active = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
@@ -89,3 +89,36 @@ class BorrowingDetailSerializer(BorrowingSerializer):
 
     def get_is_active(self, obj):
         return obj.actual_return_date is None
+
+
+class BorrowingReturnSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Borrowing
+        fields = (
+            "id",
+            "borrow_date",
+            "expected_return_date",
+            "actual_return_date",
+        )
+        read_only_fields = ("id", "borrow_date", "expected_return_date")
+
+    @transaction.atomic
+    def validate(self, attrs):
+        borrowing = self.instance
+        if borrowing.actual_return_date is not None:
+            raise ValidationError(detail="Borrowing has been already returned.")
+
+        # actual_return_date = datetime.now().date()
+        # expected_return_date = borrowing.expected_return_date
+        # if actual_return_date > expected_return_date:
+        #     overdue_period = (actual_return_date - expected_return_date).days
+
+        return super().validate(attrs=attrs)
+
+    def update(self, instance, validated_data):
+        book = instance.book
+        instance.actual_return_date = datetime.now().date()
+        instance.save()
+        book.inventory += 1
+        book.save()
+        return instance
